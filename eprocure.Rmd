@@ -1,0 +1,202 @@
+---
+title: "E-procurment"
+author: "Jess and Elena"
+date: '2022-06-07'
+output:
+  pdf_document: default
+  html_document: default
+---
+## Start with the data   
+The data was uploded from [FI$Cal SCPRS Search](https://suppliers.fiscal.ca.gov/psc/psfpd1/SUPPLIER/ERP/c/ZZ_PO.ZZ_SCPRS1_CMP.GBL?FolderPath=PORTAL_ROOT_OBJECT.ZZ_FISCAL_SCPRS.ZZ_SCPRS1_CMP_GBL&IsFolder=false&IgnoreParamTempl=FolderPath%2cIsFolder&).
+
+I applied filter by date: *06-01-2021 to 06.01.2022*; and filter by Acquisition Type: *NON-IT Goods*.  
+I downloaded files by month starting from 06.01.21 (12 files total) and merged them.
+
+
+In UNSPSC column, e-procure used commodity (80% of the dataset), sometimes class and family .
+
+
+#### Questions to understand the context  
+
+*Who*: The person or organization that created, collected, and/or funded the data collection
+
+*What*: The things in the world that data could have an impact on
+
+*Where*: The origin of the data
+
+*When*: The time when the data was created or collected
+
+*Why*: The motivation behind the creation or collection
+
+*How*: The method used to create or collect it
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(data.table)
+library(knitr)
+library(readr)
+
+```
+
+
+```{r}
+setwd("C:/SCP/DGS_data/DGS_EPP")
+
+```
+
+
+```{r}
+
+#merge all csv files.
+multmerge = function(path){
+  filenames=list.files(path=path, full.names=TRUE)
+  rbindlist(lapply(filenames, fread))
+}
+
+path <- "C:/SCP/DGS_data/DGS_EPP/files"
+eprocure <- multmerge(path)
+fwrite(eprocure, "eprocure.csv") #saved the csv
+
+eprocure_drop <- eprocure %>%  drop_na(UNSPSC) #dropped all NA thus removing info about suppliers and total paid prices. This file contains all purchased items' lines, not grouped by transaction.
+```
+
+
+
+Departments who reported data in 2021-2022:
+```{r}
+#create separate table with depts codes
+departments <- eprocure[, c(1,2)]
+departments <- distinct(departments)
+
+```
+
+
+#Describe aquisition parameters
+**describe acquisition parameters here**
+
+```{r}
+# acquisition data # not needed so far. First need to figure out the sigificance of this info for the project.
+aqusition <- eprocure[, c(48,49,50)]
+aqusition <- aqusition %>% mutate_all(na_if,"")
+aqusition <- aqusition %>% drop_na()
+```
+#### Working with UNSPSC 
+  If code-number ends with %000000 - it is Segment.    
+  If code-number ends with %%%0000 - it is Family.  
+  If code-number ends with %%%%%00 - it is Class.  
+  If code-number ends with %%%%%%0 - it is Commodity.
+  
+  
+```{r Working with UNSPSC}
+#this is a junk, I tried to figure out what are the other UNSPSC besides commodity are used. Need to think about more logical code to break down purchases according to UNSPSC hierarchy (Segment, Family, Class, Commodity).
+
+#create the frequency table with the most used UNSPSC
+unspsc_used <- as.data.frame(table(eprocure$UNSPSC))
+
+#upload UNSPSC codebook for purchased items
+unspsc_codes <- read_csv("unspsc_codes.csv")
+
+#rename the column for future join by Commodity 
+unspsc_used <- unspsc_used %>% rename("Commodity" = "Var1")
+
+#turn all used codes into factors 
+#will fix it later and turn them into chrt.
+unspsc_codes <- unspsc_codes %>% 
+  mutate(Commodity = as.factor(Commodity), Family = as.factor(Family), Class = as.factor(Class), Segment = as.factor(Segment))
+
+#perform inner join
+unspsc_comodity <- inner_join(unspsc_codes,unspsc_used, by = "Commodity")
+unspsc_comodity %>%  arrange(desc(Freq)) %>% 
+head(5)
+
+#initially 10031 distinct codes used, unspsc joined by commodity resulted in 8011 used codes
+#find what other codes left
+not_commodity <- anti_join (unspsc_used, unspsc_comodity, by = "Commodity") 
+
+#rename and select columns to join to code book by Family
+not_commodity <- rename(not_commodity, "Family" = "Commodity")
+unspsc_family <- unspsc_codes [, c(3,4)]
+unspsc_family <- unspsc_family %>%  mutate(Family = as.factor(Family))
+unspsc_family <- inner_join(unspsc_family, not_commodity, by = "Family") %>%  
+  distinct()
+
+
+#codes by family resulted in 28 observations
+#check if item class was used
+unspsc_class <- unspsc_codes[, c(5,6)] 
+not_commodity <- not_commodity %>%  rename("Class" = "Family")
+unspsc_class <- unspsc_class %>%  mutate(Class = as.factor(Class))
+unspsc_class <- inner_join(unspsc_class, not_commodity, by = "Class") %>%  
+  distinct()
+
+#resulted in 1905 observations
+#segment codes were not used at all
+unspsc_segment <- unspsc_codes[, c(1,2)] 
+not_commodity <- not_commodity %>%  rename("Segment" = "Class")
+unspsc_segment <- inner_join(unspsc_codes, not_commodity, by = "Segment") %>%  
+  distinct()
+
+```
+
+
+Data on sellers: join table with items purchased and sellers information
+
+```{r}
+
+#these data comes from the very first merged eprocure table. It was dropped in eprocure_drop. 
+sellers <- eprocure %>%  mutate_all(na_if,"") %>% 
+  drop_na("Grand Total")
+
+#All unnecessary columns are droped. Can be revised. 
+sellers_new <-sellers[, c(1:3, 5:7, 30:39, 48, 52:56)]
+eprocure_new <- eprocure_drop[, c(1:5,11:24)]
+eprocure_with_sellers <- inner_join(eprocure_new, sellers_new, by = c("Purchase Document #", "Department Name"))
+
+```
+
+
+## Example of how the database can be used 
+The dataframe was filtered by UNSPSC related to carpets for the PFAS team. Later this data can be used for sampling for lab studies  purposes.
+
+
+Filter for rugs and carpets:
+```{r}
+carpets_rugs <- eprocure_with_sellers %>%
+filter(UNSPSC %in% c(
+30161709,
+30161711,
+30161713,
+30161719,
+30161701,
+30161708,
+47131826,
+52101513,
+73141704,
+52101502,
+52101503,
+52101504,
+52101505,
+52101506))
+
+
+carpets_rugs <- carpets_rugs[, -c(4,20:26)]
+carpets_rugs <- carpets_rugs %>%  mutate("Line Total" = parse_number(`Line Total`))
+carpets_rugs <- carpets_rugs %>%  mutate("Line Total" = as.double(`Line Total`))
+
+
+
+#EPP or Not?
+print(table(carpets_rugs$`EPP (Yes/No)`))
+carpet_sellers <- carpets_rugs %>% 
+  group_by(`Supplier Name`) %>% 
+  summarise(total_paid = sum(`Line Total`)) 
+
+fwrite(carpets_rugs, "Carpets and rugs_060121-060122.csv")
+fwrite(carpet_sellers, "paid total to suppliers.csv")
+```
+
+
+```
+
