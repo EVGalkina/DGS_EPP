@@ -1,6 +1,6 @@
 ---
 title: "E-procurment"
-author: "Jess and Elena"
+author: "EG
 date: '2022-06-07'
 output:
   pdf_document: default
@@ -37,15 +37,6 @@ library(tidyverse)
 library(data.table)
 library(knitr)
 library(readr)
-
-```
-
-
-```{r}
-setwd("C:/SCP/DGS_data/DGS_EPP")
-
-```
-
 
 ```{r}
 
